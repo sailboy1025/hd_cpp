@@ -32,6 +32,10 @@ install(TARGETS
   inverse3_cpp_node
   DESTINATION lib/${PROJECT_NAME})
 
-
+# Install device_ca JSON files
+install(
+  DIRECTORY device_cal
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()

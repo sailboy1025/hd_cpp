@@ -3,16 +3,21 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include <Eigen/Dense>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "sensor_msgs/msg/joy.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "ament_index_cpp/get_package_share_directory.hpp"
 
 #include "hd_cpp/HardwareAPI.h"
 
 namespace API = Haply::HardwareAPI;
 using namespace std::chrono_literals;
+using json = nlohmann::json;
 class Inverse3Node : public rclcpp::Node
 {
 public:
@@ -23,7 +28,6 @@ public:
     btn_publisher_ = this->create_publisher<sensor_msgs::msg::Joy>("inv3_btn", 10);
     force_lock_subscriber_ = this->create_subscription<std_msgs::msg::Bool>(
         "force_lock", 10, std::bind(&Inverse3Node::force_lock_callback, this, std::placeholders::_1));
-
 
     // Parse arguments
     for (int i = 1; i < argc; ++i)
@@ -104,6 +108,7 @@ private:
     }
 
     set_gravity_compensation(gravity_compensation_);
+
   }
 
   void control_loop()
@@ -113,7 +118,10 @@ private:
     auto delay = 200us; // Target 5kHz
 
     API::Devices::Inverse3::EndEffectorStateResponse inv3_res;
-
+    Eigen::Matrix3d R_to_world = load_cal_file();
+    std::ostringstream oss;
+    oss << R_to_world;
+    RCLCPP_INFO(this->get_logger(), "Rotation matrix loaded from file: \n%s", oss.str().c_str());
     while (rclcpp::ok())
     {
       API::Devices::Inverse3::EndEffectorForceRequest request;
@@ -125,16 +133,18 @@ private:
 
       // Send force and receive new state
       inv3_res = inverse3_->EndEffectorForce(request);
-
       auto vg_res = versegrip_->GetVersegripStatus();
+      
+      Eigen::Vector3d inv3_position(inv3_res.position[0], inv3_res.position[1], inv3_res.position[2]);
+      Eigen::Vector3d inv3_cal_position =  inv3_position.transpose() * R_to_world.transpose();
 
       // Publish pose
       geometry_msgs::msg::PoseStamped pose_msg;
       pose_msg.header.stamp = this->now();
-      pose_msg.header.frame_id = "inv3_frame";
-      pose_msg.pose.position.x = inv3_res.position[0];
-      pose_msg.pose.position.y = inv3_res.position[1];
-      pose_msg.pose.position.z = inv3_res.position[2];
+      pose_msg.header.frame_id = "inv3_cal_frame";
+      pose_msg.pose.position.x = inv3_cal_position.x();
+      pose_msg.pose.position.y = inv3_cal_position.y();
+      pose_msg.pose.position.z = inv3_cal_position.z();
       pose_publisher_->publish(pose_msg);
 
       // Publish buttons
@@ -148,8 +158,7 @@ private:
 
       // High-precision timing (busy wait to next cycle)
       next += delay;
-      while (next > clock::now())
-        ;
+      while (next > clock::now());
     }
   }
 
@@ -170,6 +179,34 @@ private:
       request.force[i] = Kp * (lock_center[i] - current_position.position[i]);
     }
   }
+
+  Eigen::Matrix3d load_cal_file()
+  {
+      Eigen::Matrix3d matrix;
+  
+      std::string package_share = ament_index_cpp::get_package_share_directory("hd_cpp");
+      std::string file_path = package_share + "/device_cal/inverse3_cali_param.json";
+  
+      std::ifstream file(file_path);
+      if (!file.is_open())
+      {
+          throw std::runtime_error("Failed to open JSON file: " + file_path);
+      }
+  
+      json j;
+      file >> j;
+  
+      for (int i = 0; i < 3; ++i)
+      {
+          for (int k = 0; k < 3; ++k)
+          {
+              matrix(i, k) = j.at(i).at(k).get<double>();
+          }
+      }
+  
+      return matrix;
+  }
+  
 
   void set_gravity_compensation(bool enable)
   {
