@@ -199,15 +199,25 @@ private:
   {
     force_lock_ = msg->data;
   }
-
   void force_lock_inv3(const API::Devices::Inverse3::EndEffectorStateResponse &pos,
                        API::Devices::Inverse3::EndEffectorForceRequest &req)
   {
     std::lock_guard<std::mutex> lock(inv3_mutex_);
+
     float lock_center[3] = {0.03f, -0.16f, 0.2f};
-    float Kp = 50.0f;
+    float max_Kp = 80.0f;       // Stiff gain
+    float min_Kp = 5.0f;        // Soft gain
+    float Kd = 0.002f;          // Damping
+    float max_distance = 0.03f; // 5 cm threshold
+
     for (int i = 0; i < 3; ++i)
-      req.force[i] = Kp * (lock_center[i] - pos.position[i]);
+    {
+      float distance = std::abs(lock_center[i] - pos.position[i]);
+      float Kp = (distance <= max_distance) ? max_Kp : min_Kp;
+
+      float error = lock_center[i] - pos.position[i];
+      req.force[i] = Kp * error - Kd * pos.velocity[i];
+    }
   }
 
   void set_gravity_compensation(bool enable)
