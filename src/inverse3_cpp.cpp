@@ -71,7 +71,7 @@ private:
 
     if (inv3_ports.empty() || vp_ports.empty())
     {
-      RCLCPP_ERROR(this->get_logger(), "No devices found.");
+      RCLCPP_ERROR(this->get_logger(), "Check usb ports.");
       rclcpp::shutdown();
       return;
     }
